@@ -1,0 +1,310 @@
+diff --git a/admin/library/RDMedia/Ticket.php b/admin/library/RDMedia/Ticket.php
+index 0853417..5805e07 100644
+--- a/admin/library/RDMedia/Ticket.php
++++ b/admin/library/RDMedia/Ticket.php
+@@ -21,7 +21,217 @@ defined('_JEXEC') or die('Restricted access');
+  */
+ class Ticket
+ {
+-	/**
++
++    /**
++     * Exit-Custom checkGroupOnTable
++     *
++     * @param $amount, $ticketid
++     *
++     * @return $tablenumber or false
++     *
++     * @since v1.1-alpha
++     *
++     */
++    public function checkGroupOnTable($amount = null, $ticketid = null)
++    {
++
++        if ( ! $amount)
++        {
++            return false;
++        }
++
++        if (! $ticketid)
++        {
++            return false;
++        }
++
++        $db = \JFactory::getDBO();
++
++        $query = $db->getQuery(true)
++            ->select(['count(orderid) as amount', 'ticketid', 'tablenumber'])
++            ->from($db->quoteName('#__ticketmaster_orders'))
++            ->where($db->quoteName('ticketid') . " = " . $ticketid)
++            ->group($db->quoteName('tablenumber'))
++            ->order('tablenumber ASC');
++
++        $db->setQuery($query);
++
++        if ( ! $db->execute())
++        {
++            return 1;
++        }
++        // in event alle tische inkl. Anzahl für bestimmtes Event
++        // $event['0'] = erste Zeile (je Tisch 1 Zeile)
++        // $event['X']['0'] = anzahl an belegten Plätzen
++        // $event['X']['1'] = Ticketid
++        // $event['X']['2'] = Tischnummer
++
++        $event = $db->loadRowList();
++
++        //Load max Tickets per Table
++
++        $query = $db->getQuery(true)
++            ->select(['totalticketspertable'])
++            ->from($db->quoteName('#__ticketmaster_tickets'))
++            ->where($db->quoteName('ticketid') . " = " . $ticketid);
++
++        $db->setQuery($query);
++        // beim Event festgelegtes Maximum an Tickets pro Tisch
++        $ticketPerTable = $db->loadResult();
++
++        if ( ! $db->execute())
++        {
++            return false;
++        }
++
++        //Load max Tickets
++
++        $query = $db->getQuery(true)
++            ->select(['starting_total_tickets'])
++            ->from($db->quoteName('#__ticketmaster_tickets'))
++            ->where($db->quoteName('ticketid') . " = " . $ticketid);
++
++        $db->setQuery($query);
++        // beim Event festgelegtes Maximum an Tickets
++        $maxEventTickets = $db->loadResult();
++
++        if (!$db->execute()) {
++            return false;
++        }
++
++        $amountTables = $maxEventTickets / $ticketPerTable;
++
++        //intval($amount);
++        //intval($ticketPerTable);
++
++        for( $i = 0; $i <= count($event); $i++ )
++        {
++
++            $tableSUM = $event[$i]['0'] + $amount;
++
++            if ( $tableSUM <= $ticketPerTable )
++            {
++                $tablenumber = $i + 1;
++
++                if ($tablenumber > $amountTables)
++                {
++                    return false;
++                }
++                //set here now max available tickets (now i'm able to add more then one table
++                break;
++            }
++
++        }
++        return $tablenumber;
++    }
++
++    /**
++     * Reset maximum Tickets per Order to ensure all tickets in one order are placed
++     * on the same table
++     *
++     * @param null
++     *
++     * @return bool
++     *
++     * @since v1.1-alpha
++     */
++    public function resetMaxTicketsPerOrder($ticketid = null)
++    {
++
++        if (! $ticketid)
++        {
++            return false;
++        }
++
++        // Load event
++        $db = \JFactory::getDBO();
++
++        $query = $db->getQuery(true)
++            ->select(['count(orderid) as amount'])
++            ->from($db->quoteName('#__ticketmaster_orders'))
++            ->where($db->quoteName('ticketid') . " = " . $ticketid)
++            ->group($db->quoteName('tablenumber'))
++            ->order('tablenumber ASC');
++
++        $db->setQuery($query);
++
++        if ( ! $db->execute())
++        {
++            return false;
++        }
++
++        // $event['0'] = Auslastung erster Tisch
++        $event = $db->loadColumn();
++
++        //Load max Tickets per Table
++        $query = $db->getQuery(true)
++            ->select(['totalticketspertable'])
++            ->from($db->quoteName('#__ticketmaster_tickets'))
++            ->where($db->quoteName('ticketid') . " = " . $ticketid);
++
++        $db->setQuery($query);
++        // beim Event festgelegtes Maximum an Tickets pro Tisch
++        $ticketPerTable = $db->loadResult();
++
++        if ( ! $db->execute())
++        {
++            return false;
++        }
++
++        //Load max Tickets
++
++        $query = $db->getQuery(true)
++            ->select(['starting_total_tickets'])
++            ->from($db->quoteName('#__ticketmaster_tickets'))
++            ->where($db->quoteName('ticketid') . " = " . $ticketid);
++
++        $db->setQuery($query);
++        // beim Event festgelegtes Maximum an Tickets
++        $maxEventTickets = $db->loadResult();
++
++        if (!$db->execute()) {
++            return false;
++        }
++
++        $amountTables = $maxEventTickets / $ticketPerTable;
++
++        $tableWithMostFreeSeats = min($event);
++
++        if ( count($event) < $amountTables )
++        {
++            $maxOrdering = $ticketPerTable;
++        } else
++        {
++            $maxOrdering = $ticketPerTable - $tableWithMostFreeSeats;
++        }
++        file_put_contents('php://stderr', print_r($event, TRUE));
++
++        file_put_contents('php://stderr', print_r($maxOrdering, TRUE));
++        //Update maxOrder Amount -> for next order set maximum seats together on one table!
++
++        $query = $db->getQuery(true);
++
++        $fields = [
++            $db->quoteName('max_ordering') . ' =' . $maxOrdering ];
++
++        $conditions = [
++            $db->quoteName('ticketid') . ' = ' . $ticketid	];
++
++        $query->update($db->quoteName('#__ticketmaster_tickets'))
++            ->set($fields)
++            ->where($conditions);
++
++        $db->setQuery($query);
++
++        if ( ! $db->execute())
++        {
++            return false;
++        }
++
++        return true;
++    }
++
++    /**
+ 	 * Getting ticket details by ticketid.
+ 	 *
+ 	 * @param $ticketid
+diff --git a/admin/views/tickets/tmpl/form.php b/admin/views/tickets/tmpl/form.php
+index f49ca90..0deb477 100644
+--- a/admin/views/tickets/tmpl/form.php
++++ b/admin/views/tickets/tmpl/form.php
+ 
+@@ -245,7 +245,13 @@ if (isset($this->data->ticketid))
+ 					<td colspan="2"><input class="input" type="text" name="totaltickets" id="totaltickets"
+ 					                       value="<?php echo isset($this->data->totaltickets) ? $this->data->totaltickets : null; ?>" /></td>
+ 				</tr>
+-				<tr>
++                <tr>
++                    <td><?php echo JText::_('COM_TICKETMASTER_TOTAL_TICKETS_PER_TABLE'); ?></td>
++                    <td colspan="2"><input class="input" type="text" name="totalticketspertable" id="totalticketspertable"
++                                           value="<?php echo isset($this->data->totalticketspertable) ? $this->data->totalticketspertable : null; ?>" /></td>
++                </tr>
++
++                <tr>
+ 					<td><?php echo tooltipLabel(JText::_('COM_TICKETMASTER_TOTAL_TICKETS_START'), JText::_('COM_TICKETMASTER_TOTAL_TICKETS_START_EXPLANATION')); ?></td>
+ 					<td><input class="input" type="text" name="starting_total_tickets" id="starting_total_tickets"
+ 					           value="<?php echo isset($this->data->starting_total_tickets) ? $this->data->starting_total_tickets : null; ?>" />
+diff --git a/languages/admin/en-GB/en-GB.com_ticketmaster.ini b/languages/admin/en-GB/en-GB.com_ticketmaster.ini
+index d7f40aa..7428b9e 100644
+--- a/languages/admin/en-GB/en-GB.com_ticketmaster.ini
++++ b/languages/admin/en-GB/en-GB.com_ticketmaster.ini
+@@ -834,6 +834,7 @@ COM_TICKETMASTER_TOTAL_PRICE2="Order Price"
+ COM_TICKETMASTER_TOTAL_REGULAR_PRICE="Regular Price"
+ COM_TICKETMASTER_TOTAL_TICKETS="Total Tickets"
+ COM_TICKETMASTER_TOTAL_TICKETS_2="Tickets"
++COM_TICKETMASTER_TOTAL_TICKETS_PER_TABLE="Tickets per Table"
+ COM_TICKETMASTER_TOTAL_TICKETS_EXPLANATION="The totals of the event will be counted when adding tickets.When you have 2 events with both 50 tickets it will be become 100 tickets in total automatically"
+ COM_TICKETMASTER_TOTAL_TICKETS_START="Total Tickets (Start)"
+ COM_TICKETMASTER_TOTAL_TICKETS_START_EXPLANATION="This value will never change, the value above will be used for total ticket counter. EG: When a customer buys one ticket, the value above will decrease with one. But you want to know also what starting amount of tickets was, so this value needs to be entered once and will never change again. Now you know how many tickets are available and the starting amount."
+diff --git a/site/controllers/order.php b/site/controllers/order.php
+index d6c2b49..8147796 100644
+--- a/site/controllers/order.php
++++ b/site/controllers/order.php
+@@ -138,6 +138,19 @@ class TicketmasterControllerOrder extends JControllerLegacy
+ 		// Instantiate ticket class.♥
+ 		$ticket = new \RDMedia\Ticket;
+ 
++        //Beginngin Exit-Custom
++        //$this->amount is orderd amount %FIXME
++
++        if ( ! $ticket->checkGroupOnTable($this->amount, $this->id))
++        {
++            //FIXME: do it in JText!
++            $this->showMessage('alert alert-danger', 'Anzahl an zusammenhängende Plätze nicht verfügbar');
++        }
++
++        $post['tablenumber'] = $ticket->checkGroupOnTable($this->amount, $this->id);
++
++        //End Exit-Custom
++
+ 		for ($i = 0, $n = $this->amount; $i < $n; $i++)
+ 		{
+ 			// Saving the order data.
+@@ -168,6 +181,10 @@ class TicketmasterControllerOrder extends JControllerLegacy
+ 			}
+ 		}
+ 
++        // Exit-Custom
++        $ticket->resetMaxTicketsPerOrder($this->id);
++        // Exit-Custom
++
+ 		JPluginHelper::importPlugin('etickets');
+ 		$dispatcher = JDispatcher::getInstance();
+ 		$dispatcher->trigger('onAfterOrder', [$post]);
+@@ -387,6 +404,19 @@ class TicketmasterControllerOrder extends JControllerLegacy
+ 			return false;
+ 		}
+ 
++        // Begin Exit-Custom
++        if ($tdata->counter_choice == 1)
++        {
++            $ticket->resetMaxTicketsPerOrder($tdata->ticketid);
++        }
++
++        if ($tdata->counter_choice == 0)
++        {
++            $ticket_id = ($tdata->parentticket == 0) ? $tdata->ticketid : $tdata->parentticket;
++            $ticket->resetMaxTicketsPerOrder($ticket_id);
++        }
++        // End Exit-Custom
++
+ 		JPluginHelper::importPlugin('etickets');
+ 		$dispatcher = JDispatcher::getInstance();
+ 		$dispatcher->trigger('onAfterRemovingOrder', [$post]);
